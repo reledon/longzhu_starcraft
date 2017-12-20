@@ -14,7 +14,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget,
                             QPushButton, QTabWidget, QGroupBox, QSpinBox,
                             QSplitter, QDesktopWidget, QFileDialog, QMenu,
                             QAction, QActionGroup, QStyleFactory, QFrame,
-                            QFontDialog, QHeaderView, QInputDialog)
+                            QFontDialog, QHeaderView, QInputDialog, QMenuBar)
 
 from PyQt5.QtWebSockets import QWebSocket
 from os import path, mkdir, remove, getenv
@@ -22,6 +22,7 @@ import locale
 import requests
 import time
 import json
+from functools import partial
 
 def hideCursor():
     if mainwindow.isFullScreen():
@@ -45,10 +46,6 @@ class MpvWidget(QFrame):
     def contextMenu(self, pos=None):
         contextMenu(pos)
 
-def mpvLogHandler(loglevel, component, message):
-    print("[{}] {}: {}".format(loglevel, component, message))
-
-
 def get_longzhu_url(roomid):
     url = 'https://livestream.longzhu.com/live/GetLivePlayUrl?appId=5001&app_t='+str(int(time.time()))+'&device=2&packageId=1&roomId='+str(roomid)+'&version=4.3.0'
     print(url)
@@ -56,9 +53,12 @@ def get_longzhu_url(roomid):
 	
     json_value = json.loads(r.text)
     print(json.dumps(json_value, indent=4, sort_keys=True))
-    for url in json_value['playLines'][0]['urls']:
-        if url['ext'] == 'flv':
-            return url['securityUrl'], url['resolution'].split('x')
+    if json_value['playLines']:
+        for url in json_value['playLines'][0]['urls']:
+            if url['ext'] == 'flv':
+                return url['securityUrl'], url['resolution'].split('x')
+
+    return None, None
 
 class ListenWebsocket(QThread):
     def __init__(self, roomid, textwidget, parent=None):
@@ -100,6 +100,20 @@ class ListenWebsocket(QThread):
     def signal_readChannelFinished_process(self):
         print('signal_readChannelFinished_process')
 
+def switch_live(roomid, mpv):
+    url, resolution = get_longzhu_url(roomid)
+    print(url)
+    if url and url != 'null':
+        mp.command("loadfile", url, "replace")
+
+def setup_live_menu(live_menu, mpv):
+    with open('live.json',encoding='utf-8') as f:
+        live_list = json.loads(f.read())
+        for live in live_list['streamlist']:
+            action = live_menu.addAction(live['name'])
+            roomid = live['roomid']
+            action.triggered.connect(partial(switch_live, roomid, mpv))
+            print(action, live['roomid'])
 
 if __name__ == '__main__':
     v = "longzhu 0.1.0"
@@ -107,34 +121,35 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     locale.setlocale(locale.LC_NUMERIC, "C")
 
-    mainwindow = QMainWindow()
+    #horizontal splitter
+    main_splitter = QSplitter(Qt.Horizontal)
+    #mpv(left)
+    mpvwidget = MpvWidget(main_splitter)
+    #right splitter
+    right_splitter = QSplitter(Qt.Vertical, main_splitter)
+    #menubar
+    menubar_widget = QMenuBar(right_splitter)
+    live_menu = menubar_widget.addMenu("live")
 
-    #add centralwidget
-    centralwidget = QWidget(mainwindow)
-    mainwindow.setCentralWidget(centralwidget)
-
-    #setup layout
-    mainlayout = QHBoxLayout()
-    mainlayout.setContentsMargins(0, 0, 0, 0)
-    centralwidget.setLayout(mainlayout)
-
-    #splitter for centralwidget
-    mainwindowsplitter = QSplitter(centralwidget)
-    mainwindowsplitter.setOrientation(Qt.Horizontal)
-    leftwidget = MpvWidget()
-    rigthwidget = QTextEdit()
-    rigthwidget.setReadOnly(True)
+    #text
+    textwidget = QTextEdit(right_splitter)
+    textwidget.setReadOnly(True)
     qfont = QFont('Microsoft YaHei')
     qfont.setPointSize(10)
-    rigthwidget.setFont(qfont)
-    mainwindowsplitter.addWidget(leftwidget)
-    mainwindowsplitter.addWidget(rigthwidget)
-    mainwindowsplitter.setStretchFactor(0, 1)
-    mainwindowsplitter.setStretchFactor(1, 0)    
-    mainlayout.addWidget(mainwindowsplitter)
+    textwidget.setFont(qfont)
+
+    #fill layout
+    main_splitter.addWidget(mpvwidget)
+    main_splitter.addWidget(right_splitter)
+    main_splitter.setStretchFactor(0, 1)
+    main_splitter.setStretchFactor(1, 0)
+    right_splitter.addWidget(menubar_widget)
+    right_splitter.addWidget(textwidget)
+    right_splitter.setStretchFactor(0, 0)
+    right_splitter.setStretchFactor(1, 1)
 
     mp = mpv.MPV(
-        wid=str(int(leftwidget.winId())),
+        wid=str(int(mpvwidget.winId())),
         keep_open="yes",
         idle="yes",
         osc="yes",
@@ -145,11 +160,14 @@ if __name__ == '__main__':
         ytdl="yes",
         )
     url, resolution = get_longzhu_url(2185)
-    mainwindow.resize(int(resolution[0]), int(resolution[1]))
+    main_splitter.resize(int(resolution[0]), int(resolution[1]))
+    #main_splitter.resize(300, 300)
     mp.command("loadfile", url, "replace")
     mp.pause = False
 
-    ws_thread = ListenWebsocket(2185, rigthwidget)
+    setup_live_menu(live_menu, mpv)
 
-    mainwindow.show()
+    ws_thread = ListenWebsocket(2185, textwidget)
+
+    main_splitter.show()
     app.exec_()
