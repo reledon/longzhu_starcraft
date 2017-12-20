@@ -24,12 +24,7 @@ import time
 import json
 from functools import partial
 
-def hideCursor():
-    if mainwindow.isFullScreen():
-        app.setOverrideCursor(QCursor(Qt.BlankCursor))
-
 class MpvWidget(QFrame):
-
     def __init__(self, parent=None):
         super(MpvWidget, self).__init__(parent)
         # Make the frame black, so that the video frame
@@ -41,41 +36,28 @@ class MpvWidget(QFrame):
         self.customContextMenuRequested.connect(self.contextMenu)
         self.cursortimer = QTimer(self)
         self.cursortimer.setSingleShot(True)
-        self.cursortimer.timeout.connect(hideCursor)
 
     def contextMenu(self, pos=None):
         contextMenu(pos)
 
-def get_longzhu_url(roomid):
-    url = 'https://livestream.longzhu.com/live/GetLivePlayUrl?appId=5001&app_t='+str(int(time.time()))+'&device=2&packageId=1&roomId='+str(roomid)+'&version=4.3.0'
-    print(url)
-    r = requests.get(url, timeout=5)
-	
-    json_value = json.loads(r.text)
-    print(json.dumps(json_value, indent=4, sort_keys=True))
-    if json_value['playLines']:
-        for url in json_value['playLines'][0]['urls']:
-            if url['ext'] == 'flv':
-                return url['securityUrl'], url['resolution'].split('x')
-
-    return None, None
-
-class ListenWebsocket(QThread):
+class ChatRoom():
     def __init__(self, roomid, textwidget, parent=None):
-        super(ListenWebsocket, self).__init__(parent)
 
         self.textwidget = textwidget
+
         self.WS = QWebSocket()
-
         self.WS.open(QUrl('ws://mbgows.plu.cn:8805/?room_id='+str(roomid)+'&batch=1&group=0&connType=1'))
-
-        self.WS.textMessageReceived.connect(self.on_message)
+        self.WS.textMessageReceived.connect(self.signal_textMessageReceived_process)
         self.WS.connected.connect(self.signal_connected_process)
         self.WS.disconnected.connect(self.signal_disconnected_process)
         self.WS.error.connect(self.signal_error_process)
         self.WS.readChannelFinished.connect(self.signal_readChannelFinished_process)
 
-    def on_message(self, message):
+    def close(self):
+        if self.WS:
+            self.WS.close()
+
+    def signal_textMessageReceived_process(self, message):
         print(message)
         json_msg = json.loads(message)
         print(type(json_msg))
@@ -100,20 +82,54 @@ class ListenWebsocket(QThread):
     def signal_readChannelFinished_process(self):
         print('signal_readChannelFinished_process')
 
-def switch_live(roomid, mpv):
-    url, resolution = get_longzhu_url(roomid)
-    print(url)
-    if url and url != 'null':
-        mp.command("loadfile", url, "replace")
+class LongZhu():
+    def __init__(self, live_menu, main_splitter, mpvwidget, textwidget, mp, roomid):
+        self.main_splitter = main_splitter
+        self.live_menu = live_menu
+        self.mpvwidget = mpvwidget
+        self.textwidget = textwidget
+        self.mp = mp
+        self.roomid = roomid
+        self.chatroom = None
 
-def setup_live_menu(live_menu, mpv):
-    with open('live.json',encoding='utf-8') as f:
-        live_list = json.loads(f.read())
-        for live in live_list['streamlist']:
-            action = live_menu.addAction(live['name'])
-            roomid = live['roomid']
-            action.triggered.connect(partial(switch_live, roomid, mpv))
-            print(action, live['roomid'])
+    def get_longzhu_url(self, roomid):
+        url = 'https://livestream.longzhu.com/live/GetLivePlayUrl?appId=5001&app_t='+str(int(time.time()))+'&device=2&packageId=1&roomId='+str(roomid)+'&version=4.3.0'
+        print(url)
+        r = requests.get(url, timeout=5)
+        
+        json_value = json.loads(r.text)
+        print(json.dumps(json_value, indent=4, sort_keys=True))
+        if json_value['playLines']:
+            for url in reversed(json_value['playLines'][0]['urls']):
+                if url['ext'] == 'flv':
+                    return url['securityUrl'], url['resolution'].split('x')
+
+        return None, None
+
+    def setup_live_menu(self):
+        with open('live.json',encoding='utf-8') as f:
+            live_list = json.loads(f.read())
+            for live in live_list['streamlist']:
+                action = self.live_menu.addAction(live['name'])
+                roomid = live['roomid']
+                action.triggered.connect(partial(self.switch_live, roomid))
+
+    def setup_chatroom(self):
+        if self.chatroom:
+            self.chatroom.close()
+
+        self.chatroom = ChatRoom(self.roomid, self.textwidget)
+
+    def play(self):
+        url, resolution = self.get_longzhu_url(self.roomid)
+        self.mp.command("loadfile", url, "replace")
+        self.mp.pause = False        
+        self.main_splitter.resize(int(resolution[0]), int(resolution[1]))
+
+    def switch_live(self, newroomid):
+        self.roomid = newroomid
+        longzhu.setup_chatroom()
+        longzhu.play()
 
 if __name__ == '__main__':
     v = "longzhu 0.1.0"
@@ -159,15 +175,15 @@ if __name__ == '__main__':
         config="yes",
         ytdl="yes",
         )
-    url, resolution = get_longzhu_url(2185)
-    main_splitter.resize(int(resolution[0]), int(resolution[1]))
-    #main_splitter.resize(300, 300)
-    mp.command("loadfile", url, "replace")
-    mp.pause = False
 
-    setup_live_menu(live_menu, mpv)
-
-    ws_thread = ListenWebsocket(2185, textwidget)
+    longzhu = LongZhu(live_menu, main_splitter, mpvwidget, textwidget, mp, 2185)
+    longzhu.setup_live_menu()
+    longzhu.setup_chatroom()
+    longzhu.play()
 
     main_splitter.show()
     app.exec_()
+
+    '''
+    status https://roomapicdn.longzhu.com/room/RoomAppStatusV2?device=2&packageId=1&roomid=397449&version=4.3.0
+    '''
