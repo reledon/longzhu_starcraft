@@ -23,6 +23,7 @@ import requests
 import time
 import json
 from functools import partial
+import time
 
 class MpvWidget(QFrame):
     def __init__(self, parent=None):
@@ -82,6 +83,30 @@ class ChatRoom():
     def signal_readChannelFinished_process(self):
         print('signal_readChannelFinished_process')
 
+
+class DetectThread(QThread):
+    def __init__(self, longzhu):
+        super().__init__()
+        self.longzhu = longzhu
+        self.stop = False
+
+    def run(self):
+        while not self.stop:
+            self.detect()
+            time.sleep(30)
+
+    def detect(self):
+        live_list = self.longzhu.live_list
+        for i, live in enumerate(live_list['streamlist']):
+            url = 'https://roomapicdn.longzhu.com/room/RoomAppStatusV2?device=2&packageId=1&roomid='+str(live['roomid'])+'&version=4.3.0'
+            r = requests.get(url, timeout=5)
+            json_value = json.loads(r.text)
+            print(json_value['IsBroadcasting'])
+            if json_value['IsBroadcasting']:
+                self.longzhu.actions[i].setIcon(QIcon('online.png'))
+            else:
+                self.longzhu.actions[i].setIcon(QIcon('offline.png'))
+
 class LongZhu():
     def __init__(self, live_menu, main_splitter, mpvwidget, textwidget, mp, roomid):
         self.main_splitter = main_splitter
@@ -109,8 +134,12 @@ class LongZhu():
     def setup_live_menu(self):
         with open('live.json',encoding='utf-8') as f:
             live_list = json.loads(f.read())
+            self.live_list = live_list
+            print(type(self.live_list))
+            self.actions = []
             for live in live_list['streamlist']:
                 action = self.live_menu.addAction(live['name'])
+                self.actions = [action] + self.actions
                 roomid = live['roomid']
                 action.triggered.connect(partial(self.switch_live, roomid))
 
@@ -122,14 +151,18 @@ class LongZhu():
 
     def play(self):
         url, resolution = self.get_longzhu_url(self.roomid)
-        self.mp.command("loadfile", url, "replace")
-        self.mp.pause = False        
-        self.main_splitter.resize(int(resolution[0]), int(resolution[1]))
+        if url and resolution:
+            self.mp.command("loadfile", url, "replace")
+            self.mp.pause = False        
+            self.main_splitter.resize(int(resolution[0]), int(resolution[1]))
+            return True
+
+        return False
 
     def switch_live(self, newroomid):
         self.roomid = newroomid
-        longzhu.setup_chatroom()
-        longzhu.play()
+        if longzhu.play():
+            longzhu.setup_chatroom()
 
 if __name__ == '__main__':
     v = "longzhu 0.1.0"
@@ -180,6 +213,9 @@ if __name__ == '__main__':
     longzhu.setup_live_menu()
     longzhu.setup_chatroom()
     longzhu.play()
+
+    decect_thread = DetectThread(longzhu)
+    decect_thread.start()
 
     main_splitter.show()
     app.exec_()
