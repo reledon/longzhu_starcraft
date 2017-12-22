@@ -17,6 +17,8 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget,
                             QFontDialog, QHeaderView, QInputDialog, QMenuBar)
 
 from PyQt5.QtWebSockets import QWebSocket
+from PyQt5.QtWebEngineWidgets import QWebEnginePage, QWebEngineView
+
 from os import path, mkdir, remove, getenv
 import locale
 import requests
@@ -24,6 +26,7 @@ import time
 import json
 from functools import partial
 import time
+from pyquery import PyQuery as pq
 
 class MpvWidget(QFrame):
     def __init__(self, parent=None):
@@ -42,8 +45,7 @@ class MpvWidget(QFrame):
         contextMenu(pos)
 
 class ChatRoom():
-    def __init__(self, roomid, textwidget, parent=None):
-
+    def __init__(self, roomid, textwidget):
         self.textwidget = textwidget
 
         self.WS = QWebSocket()
@@ -83,7 +85,6 @@ class ChatRoom():
     def signal_readChannelFinished_process(self):
         print('signal_readChannelFinished_process')
 
-
 class DetectThread(QThread):
     def __init__(self, longzhu):
         super().__init__()
@@ -101,25 +102,22 @@ class DetectThread(QThread):
             url = 'https://roomapicdn.longzhu.com/room/RoomAppStatusV2?device=2&packageId=1&roomid='+str(live['roomid'])+'&version=4.3.0'
             r = requests.get(url, timeout=5)
             json_value = json.loads(r.text)
-            print(json_value['IsBroadcasting'])
+            #print(json_value['IsBroadcasting'])
             if json_value['IsBroadcasting']:
                 self.longzhu.actions[i].setIcon(QIcon('online.png'))
             else:
                 self.longzhu.actions[i].setIcon(QIcon('offline.png'))
 
 class LongZhu():
-    def __init__(self, live_menu, main_splitter, mpvwidget, textwidget, mp, roomid):
-        self.main_splitter = main_splitter
-        self.live_menu = live_menu
-        self.mpvwidget = mpvwidget
-        self.textwidget = textwidget
+    def __init__(self, main_window, mp):
+        self.main_window = main_window
         self.mp = mp
-        self.roomid = roomid
+        self.roomid = None
         self.chatroom = None
 
     def get_longzhu_url(self, roomid):
         url = 'https://livestream.longzhu.com/live/GetLivePlayUrl?appId=5001&app_t='+str(int(time.time()))+'&device=2&packageId=1&roomId='+str(roomid)+'&version=4.3.0'
-        print(url)
+        #print(url)
         r = requests.get(url, timeout=5)
         
         json_value = json.loads(r.text)
@@ -138,31 +136,139 @@ class LongZhu():
             print(type(self.live_list))
             self.actions = []
             for live in live_list['streamlist']:
-                action = self.live_menu.addAction(live['name'])
-                self.actions = [action] + self.actions
-                roomid = live['roomid']
-                action.triggered.connect(partial(self.switch_live, roomid))
+                action = self.main_window.live_menu.addAction(live['name'])
+                self.actions = self.actions + [action]
+                action.triggered.connect(partial(self.switch_live, live['roomid']))
 
     def setup_chatroom(self):
         if self.chatroom:
             self.chatroom.close()
 
-        self.chatroom = ChatRoom(self.roomid, self.textwidget)
+        roomid = self.get_roomid()
+        if roomid:
+            self.chatroom = ChatRoom(roomid, self.main_window.textwidget)
 
     def play(self):
-        url, resolution = self.get_longzhu_url(self.roomid)
-        if url and resolution:
-            self.mp.command("loadfile", url, "replace")
-            self.mp.pause = False        
-            self.main_splitter.resize(int(resolution[0]), int(resolution[1]))
-            return True
+        roomid = self.get_roomid()
+        if roomid:        
+            url, resolution = self.get_longzhu_url(roomid)
+            if url and resolution:
+                self.mp.command("loadfile", url, "replace")
+                self.mp.pause = False        
+                self.main_window.resize(int(resolution[0]), int(resolution[1]))
+                return True
 
         return False
+
+    def get_roomid(self):
+        if self.roomid:
+            return self.roomid
+        elif self.live_list and self.live_list['streamlist']:
+            return  self.live_list['streamlist'][0]['roomid']
+
+        return None
 
     def switch_live(self, newroomid):
         self.roomid = newroomid
         if longzhu.play():
             longzhu.setup_chatroom()
+
+class MainWindow(QSplitter):
+    def __init__(self):
+        super().__init__()
+
+        #add login window
+        self.login_window = LoginWindow()
+        self.login_window.set_main_window(self)
+
+        #horizontal splitter
+        self.setOrientation(Qt.Horizontal)
+
+        #mpv(left)
+        mpvwidget = MpvWidget(self)
+        #right splitter
+        right_splitter = QSplitter(Qt.Vertical, self)
+        #login splitter
+        login_splitter = QSplitter(Qt.Horizontal, right_splitter)
+        #menubar
+        menubar_widget = QMenuBar(right_splitter)
+        live_menu = menubar_widget.addMenu("live")
+
+        #text
+        textwidget = QTextEdit(right_splitter)
+        textwidget.setReadOnly(True)
+        qfont = QFont('Microsoft YaHei')
+        qfont.setPointSize(10)
+        textwidget.setFont(qfont)
+
+        #login button
+        login_button = QPushButton("登陆")
+        login_button.clicked.connect(self.login_window.show)
+        #user info
+        user_info = QLineEdit()
+        user_info.setFrame(False)
+        user_info.setReadOnly(True)
+
+        #fill layout
+        self.addWidget(mpvwidget)
+        self.addWidget(right_splitter)
+        self.setStretchFactor(0, 1)
+        self.setStretchFactor(1, 0)
+        right_splitter.addWidget(menubar_widget)
+        right_splitter.addWidget(textwidget)
+        right_splitter.addWidget(login_splitter)
+        right_splitter.setStretchFactor(0, 0)
+        right_splitter.setStretchFactor(1, 1)
+        right_splitter.setStretchFactor(2, 0)
+        login_splitter.addWidget(login_button)
+        login_splitter.addWidget(user_info)
+        self.setStretchFactor(0, 1)
+        self.setStretchFactor(1, 0)        
+
+        self.right_splitter = right_splitter
+        self.login_splitter = login_splitter
+        self.menubar_widget = menubar_widget
+        self.live_menu = live_menu
+        self.textwidget = textwidget
+        self.login_button = login_button
+        self.user_info = user_info
+        self.mpvwidget = mpvwidget
+
+    def show_login_window(self):
+        self.login_window.show()
+
+class LoginWindow(QWebEngineView):
+    def __init__(self):
+        super().__init__()
+        self.loadFinished.connect(self.process_load_finish)
+        self.main_window = None
+        self.is_login = False
+
+    def set_main_window(self, main_window):
+        self.main_window = main_window
+
+    def show(self):
+        self.load(QUrl('http://login.longzhu.com/enter'))
+        super().show()
+
+    def process_load_finish(self):
+        if self.url().host() == 'www.longzhu.com' and self.url().path() == '/':
+            print('after login')
+            self.page().toHtml(self.tohtml_cb)
+
+    def tohtml_cb(self, data):
+        self.login_html = data
+        user_menu = pq(data)('#topbar-user-menu')
+        self.level = user_menu.find('i.user-lv').attr['class'].split('-')[-1]
+        self.uid = user_menu.find('a.report-rbi-click').attr['data-label'].split(':')[-1]
+        self.username = user_menu.find('span.topbar-username').text()
+        self.is_login = True
+        print(self.level)
+        print(self.uid)
+        print(self.username)
+        self.main_window.user_info.setText('{} {}级'.format(self.username, self.level))
+        self.hide()
+
 
 if __name__ == '__main__':
     v = "longzhu 0.1.0"
@@ -170,35 +276,10 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     locale.setlocale(locale.LC_NUMERIC, "C")
 
-    #horizontal splitter
-    main_splitter = QSplitter(Qt.Horizontal)
-    #mpv(left)
-    mpvwidget = MpvWidget(main_splitter)
-    #right splitter
-    right_splitter = QSplitter(Qt.Vertical, main_splitter)
-    #menubar
-    menubar_widget = QMenuBar(right_splitter)
-    live_menu = menubar_widget.addMenu("live")
-
-    #text
-    textwidget = QTextEdit(right_splitter)
-    textwidget.setReadOnly(True)
-    qfont = QFont('Microsoft YaHei')
-    qfont.setPointSize(10)
-    textwidget.setFont(qfont)
-
-    #fill layout
-    main_splitter.addWidget(mpvwidget)
-    main_splitter.addWidget(right_splitter)
-    main_splitter.setStretchFactor(0, 1)
-    main_splitter.setStretchFactor(1, 0)
-    right_splitter.addWidget(menubar_widget)
-    right_splitter.addWidget(textwidget)
-    right_splitter.setStretchFactor(0, 0)
-    right_splitter.setStretchFactor(1, 1)
+    main_window = MainWindow()
 
     mp = mpv.MPV(
-        wid=str(int(mpvwidget.winId())),
+        wid=str(int(main_window.mpvwidget.winId())),
         keep_open="yes",
         idle="yes",
         osc="yes",
@@ -209,17 +290,19 @@ if __name__ == '__main__':
         ytdl="yes",
         )
 
-    longzhu = LongZhu(live_menu, main_splitter, mpvwidget, textwidget, mp, 2185)
+    longzhu = LongZhu(main_window, mp)
     longzhu.setup_live_menu()
     longzhu.setup_chatroom()
     longzhu.play()
 
+
     decect_thread = DetectThread(longzhu)
     decect_thread.start()
 
-    main_splitter.show()
+    main_window.show()
     app.exec_()
 
     '''
-    status https://roomapicdn.longzhu.com/room/RoomAppStatusV2?device=2&packageId=1&roomid=397449&version=4.3.0
+    online https://roomapicdn.longzhu.com/room/RoomAppStatusV2?device=2&packageId=1&roomid=397449&version=4.3.0
+    login http://login.longzhu.com/enter
     '''
