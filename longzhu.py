@@ -18,6 +18,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget,
 
 from PyQt5.QtWebSockets import QWebSocket
 from PyQt5.QtWebEngineWidgets import QWebEnginePage, QWebEngineView
+from PyQt5.QtNetwork import QNetworkCookieJar
 
 from os import path, mkdir, remove, getenv
 import locale
@@ -164,18 +165,45 @@ class LongZhu():
         if self.roomid:
             return self.roomid
         elif self.live_list and self.live_list['streamlist']:
-            return  self.live_list['streamlist'][0]['roomid']
+            self.roomid = self.live_list['streamlist'][0]['roomid']
+            return self.roomid
 
         return None
 
     def switch_live(self, newroomid):
         self.roomid = newroomid
-        if longzhu.play():
-            longzhu.setup_chatroom()
+        if self.play():
+            self.setup_chatroom()
+
+class InputEditor(QTextEdit):
+    def __init__(self, login_window, parent = None):
+        super().__init__(parent)
+        self.textChanged.connect(self.listen_input)
+        self.s = requests.Session()
+        self.login_window = login_window
+
+    def listen_input(self):
+        if self.toPlainText().endswith('\n'):
+            print(self.toPlainText())
+            self.send_input()
+            
+
+    def send_input(self):
+        url = 'http://mbgo.plu.cn/chatroom/sendmsg?group={}&content={}&color=0xffffff&style=1'.format(self.login_window.main_window.longzhu.roomid, self.toPlainText()[:-1])
+        cookies = {}
+        for cookie in self.login_window.cookiejar.cookiesForUrl(QUrl('http://login.longzhu.com/enter')):
+            cookies[str(cookie.name(), encoding='ascii')] = str(cookie.value(), encoding='ascii')
+        print(url)
+        print(cookies)
+        self.s.get(url, cookies=cookies)
+        self.clear()
 
 class MainWindow(QSplitter):
     def __init__(self):
         super().__init__()
+
+        #longzhu obj
+        self.longzhu = None
 
         #add login window
         self.login_window = LoginWindow()
@@ -205,25 +233,26 @@ class MainWindow(QSplitter):
         login_button = QPushButton("登陆")
         login_button.clicked.connect(self.login_window.show)
         #user info
-        user_info = QLineEdit()
+        user_info = QLineEdit(right_splitter)
         user_info.setFrame(False)
         user_info.setReadOnly(True)
+        #input
+        inputwidget = InputEditor(self.login_window, right_splitter)
+        inputwidget.setFont(qfont)
 
         #fill layout
         self.addWidget(mpvwidget)
         self.addWidget(right_splitter)
         self.setStretchFactor(0, 1)
-        self.setStretchFactor(1, 0)
         right_splitter.addWidget(menubar_widget)
         right_splitter.addWidget(textwidget)
         right_splitter.addWidget(login_splitter)
-        right_splitter.setStretchFactor(0, 0)
-        right_splitter.setStretchFactor(1, 1)
-        right_splitter.setStretchFactor(2, 0)
+        right_splitter.addWidget(inputwidget)
+        right_splitter.setStretchFactor(right_splitter.indexOf(textwidget), 1)
         login_splitter.addWidget(login_button)
         login_splitter.addWidget(user_info)
         self.setStretchFactor(0, 1)
-        self.setStretchFactor(1, 0)        
+        self.setStretchFactor(1, 0)
 
         self.right_splitter = right_splitter
         self.login_splitter = login_splitter
@@ -237,12 +266,19 @@ class MainWindow(QSplitter):
     def show_login_window(self):
         self.login_window.show()
 
+    def set_longzhu(self, longzhu):
+        self.longzhu = longzhu
+
 class LoginWindow(QWebEngineView):
     def __init__(self):
         super().__init__()
         self.loadFinished.connect(self.process_load_finish)
         self.main_window = None
         self.is_login = False
+        cookie_store = self.page().profile().cookieStore()
+        print(cookie_store)
+        cookie_store.cookieAdded.connect(self.cookie_added);
+        self.cookiejar = QNetworkCookieJar()
 
     def set_main_window(self, main_window):
         self.main_window = main_window
@@ -267,8 +303,14 @@ class LoginWindow(QWebEngineView):
         print(self.uid)
         print(self.username)
         self.main_window.user_info.setText('{} {}级'.format(self.username, self.level))
+        for cookie in self.cookiejar.cookiesForUrl(QUrl('http://login.longzhu.com/enter')):
+            print('name = {}, value = {}'.format(str(cookie.name(), encoding='ascii'), str(cookie.value(), encoding='ascii')))
         self.hide()
 
+    def cookie_added(self, cookie):
+        if cookie.name() == b'p1u_id' or cookie.name() == b'PLULOGINSESSID':
+            print('name = {}, domain = {}, value = {}, path = {}, date = {}'.format(cookie.name(), cookie.domain(), cookie.value(), cookie.path(), cookie.expirationDate().date()))
+            self.cookiejar.setCookiesFromUrl([cookie], QUrl('http://login.longzhu.com/enter'))
 
 if __name__ == '__main__':
     v = "longzhu 0.1.0"
@@ -291,6 +333,7 @@ if __name__ == '__main__':
         )
 
     longzhu = LongZhu(main_window, mp)
+    main_window.set_longzhu(longzhu)
     longzhu.setup_live_menu()
     longzhu.setup_chatroom()
     longzhu.play()
@@ -305,4 +348,6 @@ if __name__ == '__main__':
     '''
     online https://roomapicdn.longzhu.com/room/RoomAppStatusV2?device=2&packageId=1&roomid=397449&version=4.3.0
     login http://login.longzhu.com/enter
+    send msg http://mbgo.plu.cn/chatroom/sendmsg?group=16215&content=666&color=0xffffff&style=1&callback=_callbacks_._1hgl4h8jbjcp6rb
+    http://mbgo.plu.cn/chatroom/sendmsg?group=16215&content=%E4%B8%80%E5%8F%B0%E5%9C%A8%E4%BF%AE%E5%90%A7&color=0xffffff&style=1&callback=_callbacks_._uygzjzjbjcqg4b
     '''
