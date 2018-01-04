@@ -32,7 +32,7 @@ import pickle
 import os
 
 app_name = 'longzhu starcraft'
-version = '0.1.0'
+version = '0.2.0'
 app_icon = 'longzhu.ico'
 cookie_file = 'cookie'
 longzhu_login_url = 'http://login.longzhu.com/enter'
@@ -156,7 +156,7 @@ class LongZhu():
         json_value = json.loads(r.text)
         print(json.dumps(json_value, indent=4, sort_keys=True))
         if json_value['playLines']:
-            for url in reversed(json_value['playLines'][0]['urls']):
+            for url in json_value['playLines'][0]['urls']:
                 if url['ext'] == 'flv':
                     return url['securityUrl'], url['resolution'].split('x')
 
@@ -421,13 +421,13 @@ class LoginWindow(QWebEngineView):
 
     def load_cookie(self):
         cookies = []
-        with open(cookie_file, 'rb') as f:
-            for line in f:
-                cookie = QNetworkCookie.parseCookies(line)
-                self.cookiejar.setCookiesFromUrl(cookie, QUrl(longzhu_login_url))
-                self.page().profile().cookieStore().setCookie(cookie[0])
-            return True
-
+        if os.path.isfile(cookie_file):
+            with open(cookie_file, 'rb') as f:
+                for line in f:
+                    cookie = QNetworkCookie.parseCookies(line)
+                    self.cookiejar.setCookiesFromUrl(cookie, QUrl(longzhu_login_url))
+                    self.page().profile().cookieStore().setCookie(cookie[0])
+                return True
         return False
 
 if __name__ == '__main__':
