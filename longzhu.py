@@ -100,7 +100,10 @@ class ChatRoom(QTextEdit):
         else:
             msg = json_msg
 
-        self.insertHtml('<font color="Blue">{}</font> <font color="Black">{}</font><br>'.format(msg['msg']['user']['username'], msg['msg']['content']))
+        try:
+            self.insertHtml('<font color="Blue">{}</font> <font color="Black">{}</font><br>'.format(msg['msg']['user']['username'], msg['msg']['content']))
+        except:
+            print(msg)
         #auto scroll
         sb = self.verticalScrollBar();
         sb.setValue(sb.maximum());
@@ -373,21 +376,24 @@ class LoginWindow(QWebEngineView):
             self.page().toHtml(self.login)
 
     def login(self, data):
-        self.login_html = data
-        user_menu = pq(data)('#topbar-user-menu')
-        self.level = user_menu.find('i.user-lv').attr['class'].split('-')[-1]
-        self.uid = user_menu.find('a.report-rbi-click').attr['data-label'].split(':')[-1]
-        self.username = user_menu.find('span.topbar-username').text()
-        self.is_login = True
-        print(self.level)
-        print(self.uid)
-        print(self.username)
-        for cookie in self.cookiejar.cookiesForUrl(QUrl(longzhu_login_url)):
-            print('name = {}, value = {}'.format(str(cookie.name(), encoding='ascii'), str(cookie.value(), encoding='ascii')))
-        self.main_window.login(self.username, self.level)
-        self.load(QUrl(''))
-        self.hide()
-        self.save_cookie()
+        try:
+            self.login_html = data
+            user_menu = pq(data)('#topbar-user-menu')
+            self.level = user_menu.find('i.user-lv').attr['class'].split('-')[-1]
+            self.uid = user_menu.find('a.report-rbi-click').attr['data-label'].split(':')[-1]
+            self.username = user_menu.find('span.topbar-username').text()
+            self.is_login = True
+            print(self.level)
+            print(self.uid)
+            print(self.username)
+            for cookie in self.cookiejar.cookiesForUrl(QUrl(longzhu_login_url)):
+                print('name = {}, value = {}'.format(str(cookie.name(), encoding='ascii'), str(cookie.value(), encoding='ascii')))
+            self.main_window.login(self.username, self.level)
+            self.load(QUrl(''))
+            self.hide()
+            self.save_cookie()
+        except:
+            pass
 
     def logout(self):
         self.level = ''
